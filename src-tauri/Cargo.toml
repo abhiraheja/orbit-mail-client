@@ -1,0 +1,33 @@
+[package]
+name = "orbit"
+version = "0.1.0"
+description = "Orbit — a local-first Communication OS"
+authors = ["Orbit"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the lib name unique so it doesn't conflict with the
+# bin name on Windows (see rust-lang/cargo#8519).
+name = "orbit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Core
+thiserror = "2"
+# SQLite is compiled into the binary (bundled) so the user installs nothing extra.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Async runtime for background sync + AI streaming.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+log = "0.4"
+
+[dev-dependencies]
+# Used by loop-rule unit tests to build fixture databases in-memory.
+tempfile = "3"
