@@ -39,6 +39,8 @@ pub fn run() {
             commands::emit_test_event,
             commands::add_account,
             commands::detect_account,
+            commands::is_oauth_configured,
+            commands::set_oauth_client,
             commands::start_oauth_login,
             commands::list_accounts,
             commands::remove_account,

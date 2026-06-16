@@ -102,6 +102,19 @@ export const detectAccount = (email: string): Promise<ProviderHint> =>
 export const startOAuthLogin = (provider: string): Promise<Account> =>
   invoke("start_oauth_login", { provider });
 
+/** Whether an OAuth client ID is configured for a provider. */
+export const isOAuthConfigured = (provider: string): Promise<boolean> =>
+  invoke("is_oauth_configured", { provider });
+
+export interface SetOAuthClientInput {
+  provider: string;
+  client_id: string;
+  client_secret: string | null;
+}
+
+export const setOAuthClient = (input: SetOAuthClientInput): Promise<void> =>
+  invoke("set_oauth_client", { input });
+
 export const listAccounts = (): Promise<Account[]> => invoke("list_accounts");
 
 export const removeAccount = (accountId: number): Promise<void> =>

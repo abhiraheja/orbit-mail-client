@@ -224,7 +224,10 @@ pub async fn start_loopback() -> Result<(TcpListener, String)> {
         .local_addr()
         .map_err(|e| AppError::Sync(e.to_string()))?
         .port();
-    Ok((listener, format!("http://127.0.0.1:{port}")))
+    // Use `localhost` (not 127.0.0.1): Microsoft requires the registered redirect
+    // to be `http://localhost` and allows any loopback port for public clients;
+    // Google accepts both. The listener binds 127.0.0.1, which localhost resolves to.
+    Ok((listener, format!("http://localhost:{port}")))
 }
 
 /// Wait for the single OAuth redirect, parse its query params, and answer the

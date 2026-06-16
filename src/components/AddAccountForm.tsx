@@ -3,6 +3,7 @@ import {
   addAccount,
   detectAccount,
   startOAuthLogin,
+  isOAuthConfigured,
   type ProviderHint,
 } from "../lib/ipc";
 
@@ -14,7 +15,7 @@ interface Props {
   onAdded: (accountId: number) => void;
 }
 
-type Step = "email" | "password" | "manual";
+type Step = "email" | "password" | "manual" | "oauth_setup";
 
 /** Per-provider help for the app-password step (until OAuth client IDs ship). */
 const APP_PASSWORD_HELP: Record<string, string> = {
@@ -46,26 +47,31 @@ export function AddAccountForm({ onAdded }: Props) {
       setHint(h);
 
       if (h.method === "oauth") {
-        // Try the slick path: launch consent automatically.
-        setStatusText(`Opening ${h.label} sign-in…`);
-        try {
-          const acct = await startOAuthLogin(h.provider);
-          onAdded(acct.id);
-          return;
-        } catch (oauthErr) {
-          // No client ID configured yet (or consent failed): fall back to an app
-          // password if we know the host, otherwise manual.
-          setError(`${h.label} sign-in unavailable: ${oauthErr}`);
-          setStatusText(null);
-          // Gmail still allows IMAP app passwords; offer that as the live path.
-          if (h.provider === "gmail") {
-            setHost("imap.gmail.com");
-            setStep("password");
-          } else {
-            setStep("manual");
+        // Only launch consent if a client ID is configured — otherwise fall back
+        // cleanly instead of opening a browser that errors.
+        const configured = await isOAuthConfigured(h.provider);
+        if (configured) {
+          setStatusText(`Opening ${h.label} sign-in…`);
+          try {
+            const acct = await startOAuthLogin(h.provider);
+            onAdded(acct.id);
+            return;
+          } catch (oauthErr) {
+            setError(`${h.label} sign-in failed: ${oauthErr}`);
+            setStatusText(null);
+            return;
           }
-          return;
         }
+        // No OAuth set up yet. Gmail still allows IMAP app passwords (works today);
+        // Outlook/M365 needs OAuth, so prompt for setup.
+        if (h.provider === "gmail") {
+          setHost("imap.gmail.com");
+          setPort(993);
+          setStep("password");
+        } else {
+          setStep("oauth_setup");
+        }
+        return;
       }
 
       if (h.method === "password") {
@@ -117,6 +123,28 @@ export function AddAccountForm({ onAdded }: Props) {
         </button>
         {error && <p className="error">{error}</p>}
       </form>
+    );
+  }
+
+  if (step === "oauth_setup") {
+    return (
+      <div className="add-account">
+        <h2>{hint?.label ?? "Sign-in"} · {email}</h2>
+        <p className="hint">
+          This provider (Microsoft) requires OAuth sign-in, which needs a one-time
+          client ID from an app registration. Microsoft no longer allows app
+          passwords over IMAP, so there's no manual fallback.
+        </p>
+        <p className="hint">
+          Add a client ID in <strong>Settings → Email sign-in (OAuth)</strong>, then
+          try again. To use Orbit right now without setup, connect a Gmail address
+          with an App Password instead.
+        </p>
+        <button type="button" onClick={() => { setStep("email"); setError(null); }}>
+          ← Use a different email
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
     );
   }
 

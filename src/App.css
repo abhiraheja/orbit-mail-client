@@ -306,6 +306,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .audit-provider { font-weight: 600; }
 .audit-time { margin-left: auto; color: var(--muted); font-size: 12px; }
 .audit-summary { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .draft-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 .draft-output { width: 100%; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5; }

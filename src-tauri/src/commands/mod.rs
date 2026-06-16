@@ -104,6 +104,43 @@ pub fn detect_account(email: String) -> Result<ProviderHint> {
     Ok(discovery::detect(&email))
 }
 
+/// Is an OAuth client ID available for this provider (settings or env)? The UI
+/// checks this before attempting the consent flow, so it can fall back cleanly to
+/// an app password (Gmail) or prompt for setup (M365) instead of failing loudly.
+#[tauri::command]
+pub fn is_oauth_configured(state: State<'_, AppState>, provider: String) -> Result<bool> {
+    let conn = state.db.lock().expect("db mutex poisoned");
+    let in_settings = queries::get_setting(&conn, &format!("oauth_{provider}_client_id"))?.is_some();
+    let in_env = std::env::var(format!("ORBIT_{}_CLIENT_ID", provider.to_uppercase())).is_ok();
+    Ok(in_settings || in_env)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetOAuthClientInput {
+    pub provider: String,
+    pub client_id: String,
+    /// Optional — public clients (M365) have none; Google desktop clients do.
+    pub client_secret: Option<String>,
+}
+
+/// Store an OAuth client ID/secret for a provider (non-secret config in
+/// `app_settings`). Lets a user paste credentials from their own Google/Azure app
+/// registration so the magical sign-in works.
+#[tauri::command]
+pub fn set_oauth_client(state: State<'_, AppState>, input: SetOAuthClientInput) -> Result<()> {
+    if input.client_id.trim().is_empty() {
+        return Err(AppError::Invalid("client ID is required".into()));
+    }
+    let conn = state.db.lock().expect("db mutex poisoned");
+    queries::set_setting(&conn, &format!("oauth_{}_client_id", input.provider), input.client_id.trim())?;
+    let secret_key = format!("oauth_{}_client_secret", input.provider);
+    match input.client_secret.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => queries::set_setting(&conn, &secret_key, s)?,
+        _ => queries::delete_setting(&conn, &secret_key)?,
+    }
+    Ok(())
+}
+
 /// Open the system browser to a URL (the OAuth consent page).
 fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "windows")]

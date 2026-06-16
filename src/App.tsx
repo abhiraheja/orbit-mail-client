@@ -181,7 +181,15 @@ function App() {
         onOpenContact={handleOpenContact}
       />
 
-      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          onAccountsChanged={() => {
+            listAccounts().then(setAccounts).catch(() => {});
+            refreshLoops(filter);
+          }}
+        />
+      )}
       {draftLoop && <DraftReply loop={draftLoop} onClose={() => setDraftLoop(null)} />}
     </main>
   );
