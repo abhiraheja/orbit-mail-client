@@ -117,6 +117,40 @@ fn parse_emails(json: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(json).unwrap_or_default()
 }
 
+/// Runtime "this is bots, not a person" check for the owe_reply rule. Applied at
+/// detection time (not just ingest) so tuning it re-evaluates already-synced mail
+/// and auto-resolves noise. Deliberately err toward filtering: a missed loop is a
+/// smaller trust hit than 18 OTP/receipt/notification "loops" (AI refines later).
+fn looks_automated(from_email: &str, subject: Option<&str>) -> bool {
+    let local = from_email.split('@').next().unwrap_or("").to_lowercase();
+    const SENDER_MARKERS: &[&str] = &[
+        "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply", "do_not_reply",
+        "notification", "notifications", "notify", "alert", "alerts", "mailer",
+        "mailer-daemon", "postmaster", "bounce", "automated", "newsletter", "news",
+        "updates", "billing", "invoice", "receipt", "receipts", "statement", "verify",
+        "verification", "otp", "security", "accounts", "support", "info", "admin",
+        "system", "service", "services", "help", "team", "care", "feedback",
+        "marketing", "promo", "offers", "deals", "digest",
+    ];
+    if SENDER_MARKERS.iter().any(|m| local.contains(m)) {
+        return true;
+    }
+    if let Some(s) = subject {
+        let s = s.to_lowercase();
+        const SUBJECT_MARKERS: &[&str] = &[
+            "verification code", "one-time", "one time password", "otp", "do not reply",
+            "unsubscribe", "receipt", "invoice", "statement", "order confirmation",
+            "your order", "has shipped", "privacy policy", "terms of service",
+            "terms and", "purchased", "reminder", "expiry", "expires", "renew",
+            "subscription", "newsletter", "digest", "verify your",
+        ];
+        if SUBJECT_MARKERS.iter().any(|m| s.contains(m)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// First recipient who isn't one of my own addresses.
 fn primary_recipient(to_json: &str, owner: &HashSet<String>) -> Option<String> {
     parse_emails(to_json).into_iter().find(|e| !owner.contains(e))
@@ -142,10 +176,10 @@ fn detect(tips: &[ThreadTip], sent: &[queries::SentMessage], owner: &HashSet<Str
                     });
                 }
             }
-        } else if !tip.is_automated {
-            // Kind 2 — owe_reply: newest is inbound, not automated, plausibly
-            // expects a reply (a question, or I'm a direct To: recipient), and
-            // I haven't replied. Surfaced after a short grace period.
+        } else if !tip.is_automated && !looks_automated(&tip.from_email, tip.subject.as_deref()) {
+            // Kind 2 — owe_reply: newest is inbound, from a real person (not
+            // automated/bulk), plausibly expects a reply (a question, or I'm a
+            // direct To: recipient), and I haven't replied. Surfaced after grace.
             let has_question = tip.body_text.as_deref().is_some_and(|b| b.contains('?'))
                 || tip.subject.as_deref().is_some_and(|s| s.contains('?'));
             let i_am_direct = parse_emails(&tip.to_emails).iter().any(|e| owner.contains(e));
@@ -340,6 +374,28 @@ mod tests {
         let mut conn = db_with_account();
         let mut m = inbound("<a>", "Your receipt", "no action needed", NOW - 2 * DAY);
         m.from_email = "no-reply@stripe.com".into();
+        ingest_messages(&mut conn, 1, &owner(), Folder::Inbox, &[m], NOW).unwrap();
+        detect_and_store(&mut conn, &Config::default(), NOW).unwrap();
+        assert_eq!(loops_of_kind(&conn, LoopKind::OweReply), 0);
+    }
+
+    #[test]
+    fn owe_reply_suppressed_for_supportish_sender() {
+        // 'support@' isn't caught by the ingest-time filter, but the runtime
+        // looks_automated check should still keep it out of owe_reply.
+        let mut conn = db_with_account();
+        let mut m = inbound("<s>", "We received your ticket", "ref #123", NOW - 2 * DAY);
+        m.from_email = "support@vendor.com".into();
+        ingest_messages(&mut conn, 1, &owner(), Folder::Inbox, &[m], NOW).unwrap();
+        detect_and_store(&mut conn, &Config::default(), NOW).unwrap();
+        assert_eq!(loops_of_kind(&conn, LoopKind::OweReply), 0);
+    }
+
+    #[test]
+    fn owe_reply_suppressed_by_subject_marker() {
+        // Clean sender, but an OTP subject is unmistakably automated.
+        let mut conn = db_with_account();
+        let m = inbound("<o>", "OTP Verification", "your code is 123456", NOW - 2 * DAY);
         ingest_messages(&mut conn, 1, &owner(), Folder::Inbox, &[m], NOW).unwrap();
         detect_and_store(&mut conn, &Config::default(), NOW).unwrap();
         assert_eq!(loops_of_kind(&conn, LoopKind::OweReply), 0);

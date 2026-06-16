@@ -5,6 +5,7 @@
 //! ever shows up (e.g. long sync writes blocking UI reads), revisit with a pool
 //! or a dedicated writer thread — do not pre-optimize.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -36,6 +37,9 @@ pub struct AppState {
     /// Selected AI provider, if any. Empty by default — the app is fully
     /// functional with no provider configured (spec §3.3).
     pub ai: crate::ai::AiRegistry,
+    /// Account IDs with a sync currently in flight — prevents overlapping syncs
+    /// that would open redundant IMAP connections (Gmail throttles these).
+    pub syncing: Mutex<HashSet<i64>>,
     /// Location of the SQLite file on disk; surfaced in diagnostics.
     pub db_path: PathBuf,
 }
@@ -52,6 +56,7 @@ impl AppState {
             db: Mutex::new(conn),
             config: Mutex::new(Config::default()),
             ai: crate::ai::AiRegistry::default(),
+            syncing: Mutex::new(HashSet::new()),
             db_path,
         })
     }

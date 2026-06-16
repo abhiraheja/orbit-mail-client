@@ -114,6 +114,27 @@ pub struct OAuthTokens {
     pub refresh_token: Option<String>,
     #[serde(default)]
     pub expires_in: Option<i64>,
+    /// OIDC ID token (a JWT) — present because we request the `openid email`
+    /// scopes. We read the account email from it rather than calling a userinfo
+    /// endpoint, which avoids audience mismatches (the access token for IMAP is
+    /// not valid against Microsoft Graph).
+    #[serde(default)]
+    pub id_token: Option<String>,
+}
+
+/// Extract the account email from an OIDC ID token (JWT) without verifying its
+/// signature — we just received it over TLS from the provider's token endpoint,
+/// so it's trusted for the purpose of labelling the account. Reads `email`, then
+/// `preferred_username`, then `upn` (Microsoft's variants).
+pub fn email_from_id_token(jwt: &str) -> Option<String> {
+    let payload = jwt.split('.').nth(1)?.trim_end_matches('=');
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v["email"]
+        .as_str()
+        .or_else(|| v["preferred_username"].as_str())
+        .or_else(|| v["upn"].as_str())
+        .map(|s| s.to_lowercase())
 }
 
 /// Exchange an authorization code for tokens (PKCE; client_secret optional for
@@ -356,5 +377,25 @@ mod tests {
     #[test]
     fn unknown_provider_is_none() {
         assert!(provider_def("yahoo").is_none());
+    }
+
+    #[test]
+    fn email_extracted_from_id_token() {
+        // header.payload.signature; payload = {"email":"me@x.com"} base64url-no-pad.
+        let payload = URL_SAFE_NO_PAD.encode(br#"{"email":"Me@X.com","sub":"1"}"#);
+        let jwt = format!("aGVhZGVy.{payload}.sig");
+        assert_eq!(email_from_id_token(&jwt).as_deref(), Some("me@x.com"));
+    }
+
+    #[test]
+    fn email_falls_back_to_preferred_username() {
+        let payload = URL_SAFE_NO_PAD.encode(br#"{"preferred_username":"user@outlook.com"}"#);
+        let jwt = format!("h.{payload}.s");
+        assert_eq!(email_from_id_token(&jwt).as_deref(), Some("user@outlook.com"));
+    }
+
+    #[test]
+    fn malformed_jwt_is_none() {
+        assert!(email_from_id_token("not-a-jwt").is_none());
     }
 }

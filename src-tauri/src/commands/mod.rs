@@ -142,9 +142,16 @@ pub fn set_oauth_client(state: State<'_, AppState>, input: SetOAuthClientInput) 
 }
 
 /// Open the system browser to a URL (the OAuth consent page).
+///
+/// On Windows we deliberately avoid `cmd /C start`: it treats `&` as a command
+/// separator and truncates the OAuth URL at its first query parameter. `rundll32
+/// url.dll,FileProtocolHandler` passes the URL as a single argument with no shell
+/// parsing, so the full URL (with all `&`-separated params) reaches the browser.
 fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
-    let spawned = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    let spawned = std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -208,7 +215,12 @@ pub async fn start_oauth_login(app: AppHandle, provider: String) -> Result<Accou
         .refresh_token
         .clone()
         .ok_or_else(|| AppError::Sync("provider returned no refresh token".into()))?;
-    let email = oauth::fetch_email(&def, &tokens.access_token).await?;
+    // Prefer the email from the ID token (correct for both Google and Microsoft);
+    // fall back to a userinfo call only if it's absent.
+    let email = match tokens.id_token.as_deref().and_then(oauth::email_from_id_token) {
+        Some(e) => e,
+        None => oauth::fetch_email(&def, &tokens.access_token).await?,
+    };
 
     let cref = secrets::oauth_cred_ref(&email);
     secrets::store_oauth(
@@ -226,9 +238,7 @@ pub async fn start_oauth_login(app: AppHandle, provider: String) -> Result<Accou
     // Kick off the first sync in the background.
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_sync(&app2, id).await {
-            events::sync_error(&app2, SyncError { account_id: id, message: e.to_string() });
-        }
+        run_sync_supervised(&app2, id).await;
     });
 
     Ok(Account {
@@ -262,14 +272,51 @@ pub fn remove_account(state: State<'_, AppState>, account_id: i64) -> Result<()>
 #[tauri::command]
 pub fn sync_account(app: AppHandle, account_id: i64) -> Result<()> {
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_sync(&app, account_id).await {
-            events::sync_error(
-                &app,
-                SyncError { account_id, message: e.to_string() },
-            );
-        }
+        run_sync_supervised(&app, account_id).await;
     });
     Ok(())
+}
+
+/// Run a sync with a hard timeout and visible logging, emitting a `sync:error`
+/// event on failure. A hang (e.g. a blocked network call) becomes a clear error
+/// after the timeout instead of an endless "Starting sync…".
+async fn run_sync_supervised(app: &AppHandle, account_id: i64) {
+    // Single-flight: skip if a sync for this account is already running. Without
+    // this, repeated Sync clicks open redundant IMAP connections that race and
+    // get throttled by the provider — the main cause of timeouts.
+    {
+        let state = app.state::<AppState>();
+        let mut in_flight = state.syncing.lock().expect("syncing mutex poisoned");
+        if !in_flight.insert(account_id) {
+            eprintln!("[sync] account {account_id} already syncing — skipping duplicate");
+            return;
+        }
+    }
+
+    let fut = run_sync(app, account_id);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(180), fut).await;
+
+    // Always clear the in-flight flag, however the sync ended.
+    app.state::<AppState>()
+        .syncing
+        .lock()
+        .expect("syncing mutex poisoned")
+        .remove(&account_id);
+
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            log::error!("[sync] account {account_id} failed: {e}");
+            eprintln!("[sync] account {account_id} failed: {e}");
+            events::sync_error(app, SyncError { account_id, message: e.to_string() });
+        }
+        Err(_) => {
+            let msg = "sync timed out (180s) — check internet and that IMAP is enabled".to_string();
+            log::error!("[sync] account {account_id} timed out");
+            eprintln!("[sync] account {account_id} timed out");
+            events::sync_error(app, SyncError { account_id, message: msg });
+        }
+    }
 }
 
 async fn run_sync(app: &AppHandle, account_id: i64) -> Result<()> {
@@ -287,6 +334,7 @@ async fn run_sync(app: &AppHandle, account_id: i64) -> Result<()> {
             let secret = secrets::load_oauth(&cred_ref)?;
             let def = oauth::provider_def(&provider)
                 .ok_or_else(|| AppError::Sync(format!("unknown oauth provider {provider}")))?;
+            eprintln!("[sync] refreshing {provider} access token");
             // Mint a fresh access token from the stored refresh token.
             let tokens = oauth::refresh_access_token(
                 &def,
@@ -295,6 +343,7 @@ async fn run_sync(app: &AppHandle, account_id: i64) -> Result<()> {
                 &secret.refresh_token,
             )
             .await?;
+            eprintln!("[sync] token refreshed, connecting IMAP");
             ImapConfig {
                 host: def.imap_host.to_string(),
                 port: def.imap_port,

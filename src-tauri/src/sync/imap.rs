@@ -19,8 +19,10 @@ use crate::sync::oauth::XOAuth2;
 use crate::sync::{FetchBatch, Folder, IncomingMessage, MailSource};
 
 /// Cap the first (cursorless) pull so initial sync stays bounded on large
-/// mailboxes. Subsequent syncs are incremental from the stored UID.
-const INITIAL_WINDOW: i64 = 500;
+/// mailboxes. Subsequent syncs are incremental from the stored UID. Kept modest
+/// so the first sync (full message bodies over IMAP) completes quickly; recent
+/// mail is what drives loops anyway.
+const INITIAL_WINDOW: i64 = 200;
 
 /// How the IMAP session authenticates: app password (LOGIN) or an OAuth bearer
 /// token (SASL XOAUTH2, for Gmail / M365).
@@ -45,23 +47,56 @@ impl ImapSource {
     pub fn new(cfg: ImapConfig) -> Self {
         Self { cfg }
     }
+
+    /// Map a logical folder to the server's actual mailbox name. Gmail and
+    /// Microsoft don't call their sent folder "Sent" (Gmail uses a special-use
+    /// mailbox under [Gmail]); without this the Sent pull silently returns 0
+    /// messages and waiting_on/promised loops never fire.
+    fn mailbox_name(&self, folder: Folder) -> String {
+        let host = self.cfg.host.to_lowercase();
+        match folder {
+            Folder::Inbox => "INBOX".to_string(),
+            Folder::Sent => {
+                if host.contains("gmail") || host.contains("googlemail") {
+                    "[Gmail]/Sent Mail".to_string()
+                } else if host.contains("outlook") || host.contains("office365") || host.contains("hotmail") {
+                    "Sent Items".to_string()
+                } else {
+                    "Sent".to_string()
+                }
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl MailSource for ImapSource {
     async fn fetch(&mut self, folder: Folder, since_uid: Option<i64>) -> Result<FetchBatch> {
         // 1. TCP + TLS to the IMAP endpoint.
+        eprintln!("[imap] connecting {}:{} ({})", self.cfg.host, self.cfg.port, folder.as_str());
         let tcp = TcpStream::connect((self.cfg.host.as_str(), self.cfg.port))
             .await
             .map_err(|e| AppError::Sync(format!("connect {}:{}: {e}", self.cfg.host, self.cfg.port)))?;
+        eprintln!("[imap] tcp ok, starting TLS");
         let tls = async_native_tls::TlsConnector::new()
             .connect(self.cfg.host.as_str(), tcp)
             .await
             .map_err(|e| AppError::Sync(format!("TLS handshake: {e}")))?;
+        eprintln!("[imap] tls ok, authenticating");
 
-        // 2. Authenticate: app-password LOGIN, or SASL XOAUTH2 for OAuth accounts.
+        // 2. Read the server greeting FIRST. async-imap requires this after
+        //    `Client::new`; skipping it desyncs the response parser and the next
+        //    command hangs forever (there is no top-level connect() that does it).
+        let mut client = Client::new(tls);
+        let _greeting = client
+            .read_response()
+            .await
+            .map_err(|e| AppError::Sync(format!("IMAP greeting: {e}")))?
+            .ok_or_else(|| AppError::Sync("connection closed before IMAP greeting".into()))?;
+        eprintln!("[imap] greeting received, authenticating");
+
+        // 3. Authenticate: app-password LOGIN, or SASL XOAUTH2 for OAuth accounts.
         //    On failure async-imap hands back the client alongside the error.
-        let client = Client::new(tls);
         let mut session = match &self.cfg.auth {
             ImapAuth::Password(password) => client
                 .login(&self.cfg.email, password)
@@ -79,10 +114,13 @@ impl MailSource for ImapSource {
         // 3. SELECT the folder and read its UID metadata.
         // TODO(folders): the Sent folder name varies by server ("Sent Items",
         // "[Gmail]/Sent Mail"); make it configurable / discover via LIST.
+        let mailbox_name = self.mailbox_name(folder);
+        eprintln!("[imap] auth ok, selecting {mailbox_name}");
         let mailbox = session
-            .select(folder.as_str())
+            .select(&mailbox_name)
             .await
-            .map_err(|e| AppError::Sync(format!("SELECT {}: {e}", folder.as_str())))?;
+            .map_err(|e| AppError::Sync(format!("SELECT {mailbox_name}: {e}")))?;
+        eprintln!("[imap] selected {mailbox_name} (exists={})", mailbox.exists);
         let uid_validity = mailbox.uid_validity.map(|v| v as i64);
         // TODO(uidvalidity): if uid_validity changed vs the stored cursor, the old
         // UIDs are invalid and we should re-pull from 1. The runner persists it;
