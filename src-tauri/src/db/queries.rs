@@ -6,7 +6,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::Result;
-use crate::models::{Account, Contact, LoopView};
+use crate::models::{Account, AuditEntry, Contact, LoopView};
 
 // --- Schema / health --------------------------------------------------------
 
@@ -287,6 +287,47 @@ pub fn account_cred_ref(conn: &Connection, account_id: i64) -> Result<Option<(St
         )
         .optional()?;
     Ok(row)
+}
+
+// --- AI audit log (the privacy chokepoint, spec §3.3) -----------------------
+
+/// Record one outbound AI call. Written BEFORE the provider is contacted so the
+/// log can never under-report what left the machine.
+pub fn insert_audit(
+    conn: &Connection,
+    timestamp: i64,
+    provider: &str,
+    model: Option<&str>,
+    purpose: &str,
+    data_summary: &str,
+    was_local: bool,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO ai_audit_log
+            (timestamp, provider, model, purpose, data_summary, was_local)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![timestamp, provider, model, purpose, data_summary, was_local as i64],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn list_audit(conn: &Connection) -> Result<Vec<AuditEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp, provider, model, purpose, data_summary, was_local
+         FROM ai_audit_log ORDER BY timestamp DESC, id DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(AuditEntry {
+            id: r.get(0)?,
+            timestamp: r.get(1)?,
+            provider: r.get(2)?,
+            model: r.get(3)?,
+            purpose: r.get(4)?,
+            data_summary: r.get(5)?,
+            was_local: r.get::<_, i64>(6)? != 0,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 // --- Loop detection inputs --------------------------------------------------

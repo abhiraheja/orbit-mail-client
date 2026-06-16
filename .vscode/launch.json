@@ -1,0 +1,26 @@
+{
+  // Tauri debug configs. Uses CodeLLDB (vadimcn.vscode-lldb) to build and debug
+  // the Rust core while a preLaunchTask serves the frontend. Set breakpoints in
+  // src-tauri/**.rs and launch "Tauri Development Debug".
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Tauri Development Debug",
+      "cargo": {
+        "args": ["build", "--manifest-path=./src-tauri/Cargo.toml", "--no-default-features"]
+      },
+      "preLaunchTask": "ui:dev"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Tauri Production Debug",
+      "cargo": {
+        "args": ["build", "--release", "--manifest-path=./src-tauri/Cargo.toml"]
+      },
+      "preLaunchTask": "ui:build"
+    }
+  ]
+}

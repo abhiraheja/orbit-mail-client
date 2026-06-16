@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Serves the frontend for "Tauri Development Debug". Marked background; the
+      // problemMatcher tells VSCode the task is "ready" once Vite prints its URL.
+      "label": "ui:dev",
+      "type": "shell",
+      "isBackground": true,
+      "command": "npm",
+      "args": ["run", "dev"],
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*Local:.*"
+        }
+      }
+    },
+    {
+      "label": "ui:build",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"]
+    }
+  ]
+}

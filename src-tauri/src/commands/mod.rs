@@ -6,11 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::ai::provider::AiRequest;
 use crate::db::queries;
 use crate::error::{AppError, Result};
-use crate::events::{self, LoopsUpdated, SyncComplete, SyncError, SyncProgress};
+use crate::events::{self, AiDone, AiToken, LoopsUpdated, SyncComplete, SyncError, SyncProgress};
 use crate::loops::rules;
-use crate::models::{Account, Contact, LoopKind, LoopView, ThreadView};
+use crate::models::{Account, AuditEntry, Contact, LoopKind, LoopView, ThreadView};
 use crate::secrets::{self, ImapSecret};
 use crate::state::AppState;
 use crate::sync::imap::{ImapConfig, ImapSource};
@@ -210,4 +211,74 @@ pub fn get_thread(state: State<'_, AppState>, thread_id: i64) -> Result<ThreadVi
 pub fn list_contacts(state: State<'_, AppState>) -> Result<Vec<Contact>> {
     let conn = state.db.lock().expect("db mutex poisoned");
     queries::list_contacts(&conn)
+}
+
+// --- AI (post-heuristic; optional) ------------------------------------------
+
+/// Draft a reply for a thread, streaming tokens as `ai:token` events and a final
+/// `ai:done`. Returns the request_id immediately. Errors clearly when no provider
+/// is configured — heuristic loops never depend on this (spec §9).
+#[tauri::command]
+pub fn draft_reply(app: AppHandle, thread_id: i64, instructions: String) -> Result<String> {
+    let state = app.state::<AppState>();
+    if !state.ai.is_configured() {
+        return Err(AppError::Ai("no AI provider configured".into()));
+    }
+
+    // Build the prompt from thread context. The data_summary honestly describes
+    // what will leave the machine, for the audit log.
+    let thread = {
+        let conn = state.db.lock().expect("db mutex poisoned");
+        queries::thread_view(&conn, thread_id)?
+            .ok_or_else(|| AppError::NotFound(format!("thread {thread_id}")))?
+    };
+    let subject = thread.subject.clone().unwrap_or_else(|| "(no subject)".into());
+    let transcript = thread
+        .messages
+        .iter()
+        .map(|m| format!("From: {}\n{}", m.from_email, m.body_text.as_deref().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    let req = AiRequest {
+        purpose: "draft_reply".into(),
+        system: Some("You draft concise, professional email replies.".into()),
+        prompt: format!("Thread subject: {subject}\n\n{transcript}\n\nInstructions: {instructions}"),
+        data_summary: format!(
+            "thread '{subject}' ({} messages) + user instructions",
+            thread.messages.len()
+        ),
+        model: None,
+    };
+
+    let request_id = format!("draft-{thread_id}-{}", now_unix());
+    let rid = request_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let now = now_unix();
+        match state.ai.complete(&state.db, now, req).await {
+            Ok(mut stream) => {
+                use futures::StreamExt;
+                while let Some(tok) = stream.next().await {
+                    match tok {
+                        Ok(token) => events::ai_token(&app, AiToken { request_id: rid.clone(), token }),
+                        Err(e) => {
+                            events::ai_token(&app, AiToken { request_id: rid.clone(), token: format!("\n[error: {e}]") });
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => events::ai_token(&app, AiToken { request_id: rid.clone(), token: format!("[error: {e}]") }),
+        }
+        events::ai_done(&app, AiDone { request_id: rid });
+    });
+
+    Ok(request_id)
+}
+
+/// The "what left my machine" transparency view (spec §3.3).
+#[tauri::command]
+pub fn get_ai_audit_log(state: State<'_, AppState>) -> Result<Vec<AuditEntry>> {
+    let conn = state.db.lock().expect("db mutex poisoned");
+    queries::list_audit(&conn)
 }

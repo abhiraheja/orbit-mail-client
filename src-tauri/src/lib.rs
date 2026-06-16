@@ -43,6 +43,8 @@ pub fn run() {
             commands::dismiss_loop,
             commands::get_thread,
             commands::list_contacts,
+            commands::draft_reply,
+            commands::get_ai_audit_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

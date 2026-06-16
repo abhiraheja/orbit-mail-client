@@ -33,6 +33,9 @@ impl Default for Config {
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub config: Mutex<Config>,
+    /// Selected AI provider, if any. Empty by default — the app is fully
+    /// functional with no provider configured (spec §3.3).
+    pub ai: crate::ai::AiRegistry,
     /// Location of the SQLite file on disk; surfaced in diagnostics.
     pub db_path: PathBuf,
 }
@@ -48,6 +51,7 @@ impl AppState {
         Ok(Self {
             db: Mutex::new(conn),
             config: Mutex::new(Config::default()),
+            ai: crate::ai::AiRegistry::default(),
             db_path,
         })
     }

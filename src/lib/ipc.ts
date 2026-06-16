@@ -90,6 +90,23 @@ export const getThread = (threadId: number): Promise<ThreadView> =>
 
 export const listContacts = (): Promise<Contact[]> => invoke("list_contacts");
 
+export interface AuditEntry {
+  id: number;
+  timestamp: number;
+  provider: string;
+  model: string | null;
+  purpose: string;
+  data_summary: string;
+  was_local: boolean;
+}
+
+/** Streams ai:token events; resolves with the request_id to correlate them. */
+export const draftReply = (threadId: number, instructions: string): Promise<string> =>
+  invoke("draft_reply", { threadId, instructions });
+
+/** The "what left my machine" transparency view. */
+export const getAiAuditLog = (): Promise<AuditEntry[]> => invoke("get_ai_audit_log");
+
 // --- Events (Rust → frontend) ----------------------------------------------
 
 export interface SyncProgress {
@@ -120,3 +137,17 @@ export const onSyncError = (cb: (p: SyncError) => void): Promise<UnlistenFn> =>
 
 export const onLoopsUpdated = (cb: (p: LoopsUpdated) => void): Promise<UnlistenFn> =>
   listen<LoopsUpdated>("loops:updated", (e) => cb(e.payload));
+
+export interface AiToken {
+  request_id: string;
+  token: string;
+}
+export interface AiDone {
+  request_id: string;
+}
+
+export const onAiToken = (cb: (p: AiToken) => void): Promise<UnlistenFn> =>
+  listen<AiToken>("ai:token", (e) => cb(e.payload));
+
+export const onAiDone = (cb: (p: AiDone) => void): Promise<UnlistenFn> =>
+  listen<AiDone>("ai:done", (e) => cb(e.payload));

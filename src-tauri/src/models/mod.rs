@@ -88,3 +88,15 @@ pub struct ThreadView {
     pub subject: Option<String>,
     pub messages: Vec<Message>,
 }
+
+/// One row of the privacy audit log — powers the "what left my machine" view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub timestamp: i64,
+    pub provider: String,
+    pub model: Option<String>,
+    pub purpose: String,
+    pub data_summary: String,
+    pub was_local: bool,
+}
