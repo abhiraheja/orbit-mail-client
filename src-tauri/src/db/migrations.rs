@@ -38,9 +38,12 @@ const MIGRATIONS: &[&str] = &[
         id            INTEGER PRIMARY KEY,
         account_id    INTEGER NOT NULL REFERENCES accounts(id),
         subject       TEXT,
+        norm_subject  TEXT,                 -- subject with re:/fwd: stripped, for grouping
         last_message  INTEGER,              -- UTC unix seconds of newest message
         UNIQUE(account_id, id)
     );
+
+    CREATE INDEX idx_threads_norm_subject ON threads(account_id, norm_subject);
 
     -- Individual messages.
     CREATE TABLE messages (

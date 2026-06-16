@@ -8,6 +8,7 @@ mod events;
 mod graph;
 mod loops;
 mod models;
+mod secrets;
 mod state;
 mod sync;
 
@@ -33,6 +34,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::emit_test_event,
+            commands::add_account,
+            commands::list_accounts,
+            commands::remove_account,
+            commands::sync_account,
+            commands::list_loops,
+            commands::snooze_loop,
+            commands::dismiss_loop,
+            commands::get_thread,
+            commands::list_contacts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -25,8 +25,16 @@ thiserror = "2"
 # SQLite is compiled into the binary (bundled) so the user installs nothing extra.
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Async runtime for background sync + AI streaming.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 log = "0.4"
+async-trait = "0.1"
+futures = "0.3"
+# IMAP client (async) + RFC 822 parsing. Streaming-friendly, fits "events from day one".
+async-imap = "0.11"
+async-native-tls = "0.5"
+mail-parser = "0.11"
+# Credentials live in the OS keychain, never in SQLite (spec §7).
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 [dev-dependencies]
 # Used by loop-rule unit tests to build fixture databases in-memory.
