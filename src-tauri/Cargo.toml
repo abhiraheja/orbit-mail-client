@@ -30,8 +30,10 @@ log = "0.4"
 async-trait = "0.1"
 futures = "0.3"
 # IMAP client (async) + RFC 822 parsing. Streaming-friendly, fits "events from day one".
-async-imap = "0.11"
-async-native-tls = "0.5"
+# Both default to async-std; we drive them on the same tokio runtime as the rest
+# of the app, so select the tokio runtime explicitly.
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+async-native-tls = { version = "0.5", default-features = false, features = ["runtime-tokio"] }
 mail-parser = "0.11"
 # Credentials live in the OS keychain, never in SQLite (spec §7).
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
