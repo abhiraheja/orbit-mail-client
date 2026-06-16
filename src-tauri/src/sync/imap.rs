@@ -15,18 +15,26 @@ use mail_parser::{Address, HeaderValue, MessageParser};
 use tokio::net::TcpStream;
 
 use crate::error::{AppError, Result};
+use crate::sync::oauth::XOAuth2;
 use crate::sync::{FetchBatch, Folder, IncomingMessage, MailSource};
 
 /// Cap the first (cursorless) pull so initial sync stays bounded on large
 /// mailboxes. Subsequent syncs are incremental from the stored UID.
 const INITIAL_WINDOW: i64 = 500;
 
-/// Connection parameters for a plain-IMAP account.
+/// How the IMAP session authenticates: app password (LOGIN) or an OAuth bearer
+/// token (SASL XOAUTH2, for Gmail / M365).
+pub enum ImapAuth {
+    Password(String),
+    OAuth { access_token: String },
+}
+
+/// Connection parameters for an IMAP account.
 pub struct ImapConfig {
     pub host: String,
     pub port: u16,
     pub email: String,
-    pub password: String,
+    pub auth: ImapAuth,
 }
 
 pub struct ImapSource {
@@ -51,13 +59,22 @@ impl MailSource for ImapSource {
             .await
             .map_err(|e| AppError::Sync(format!("TLS handshake: {e}")))?;
 
-        // 2. Authenticate (app-password). On failure async-imap hands back the
-        //    client alongside the error; we only need the error.
+        // 2. Authenticate: app-password LOGIN, or SASL XOAUTH2 for OAuth accounts.
+        //    On failure async-imap hands back the client alongside the error.
         let client = Client::new(tls);
-        let mut session = client
-            .login(&self.cfg.email, &self.cfg.password)
-            .await
-            .map_err(|(e, _client)| AppError::Sync(format!("IMAP login: {e}")))?;
+        let mut session = match &self.cfg.auth {
+            ImapAuth::Password(password) => client
+                .login(&self.cfg.email, password)
+                .await
+                .map_err(|(e, _client)| AppError::Sync(format!("IMAP login: {e}")))?,
+            ImapAuth::OAuth { access_token } => {
+                let auth = XOAuth2 { user: self.cfg.email.clone(), access_token: access_token.clone() };
+                client
+                    .authenticate("XOAUTH2", &auth)
+                    .await
+                    .map_err(|(e, _client)| AppError::Sync(format!("IMAP XOAUTH2: {e}")))?
+            }
+        };
 
         // 3. SELECT the folder and read its UID metadata.
         // TODO(folders): the Sent folder name varies by server ("Sent Items",

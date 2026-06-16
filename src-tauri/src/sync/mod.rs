@@ -5,8 +5,10 @@
 //! (spec §12 — "make sync logic testable without a live server"). Fetched mail is
 //! normalized and persisted by [`ingest`], which is what loop detection reads.
 
+pub mod discovery;
 pub mod imap;
 pub mod ingest;
+pub mod oauth;
 pub mod runner;
 
 use crate::error::Result;

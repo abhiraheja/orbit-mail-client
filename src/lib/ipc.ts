@@ -89,6 +89,19 @@ export const ping = (): Promise<number> => invoke("ping");
 export const addAccount = (input: AddAccountInput): Promise<Account> =>
   invoke("add_account", { input });
 
+/** Result of email-first provider detection. `method` discriminates the union. */
+export type ProviderHint =
+  | { label: string; method: "oauth"; provider: string }
+  | { label: string; method: "password"; imap_host: string; imap_port: number }
+  | { label: string; method: "manual" };
+
+export const detectAccount = (email: string): Promise<ProviderHint> =>
+  invoke("detect_account", { email });
+
+/** Run the full OAuth login (opens the browser, captures the redirect). */
+export const startOAuthLogin = (provider: string): Promise<Account> =>
+  invoke("start_oauth_login", { provider });
+
 export const listAccounts = (): Promise<Account[]> => invoke("list_accounts");
 
 export const removeAccount = (accountId: number): Promise<void> =>
@@ -135,6 +148,27 @@ export const draftReply = (threadId: number, instructions: string): Promise<stri
 
 /** The "what left my machine" transparency view. */
 export const getAiAuditLog = (): Promise<AuditEntry[]> => invoke("get_ai_audit_log");
+
+export interface AiStatus {
+  configured: boolean;
+  kind: string | null;
+  model: string | null;
+  local: boolean;
+}
+
+export interface SetAiProviderInput {
+  kind: string;
+  base_url: string | null;
+  model: string;
+  api_key: string | null;
+}
+
+export const getAiStatus = (): Promise<AiStatus> => invoke("get_ai_status");
+
+export const setAiProvider = (input: SetAiProviderInput): Promise<AiStatus> =>
+  invoke("set_ai_provider", { input });
+
+export const clearAiProvider = (): Promise<AiStatus> => invoke("clear_ai_provider");
 
 // --- Events (Rust → frontend) ----------------------------------------------
 

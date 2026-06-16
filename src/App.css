@@ -179,6 +179,15 @@ button:disabled { opacity: 0.5; cursor: default; }
   flex: 1;
 }
 .error { color: var(--owe); font-size: 13px; margin: 0; }
+.link-button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 0;
+  font-size: 13px;
+  text-align: left;
+}
+.link-button:hover { color: var(--text); border: none; }
 
 /* Command palette (Ctrl+K) */
 .palette-hint { display: flex; align-items: center; gap: 8px; }
@@ -249,3 +258,54 @@ button:disabled { opacity: 0.5; cursor: default; }
   text-overflow: ellipsis;
   max-width: 45%;
 }
+
+/* Settings + draft modals (reuse .palette-overlay) */
+.settings, .draft {
+  width: 600px;
+  max-width: 92vw;
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+.settings-head, .draft .settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.settings-head h2, .draft h2 { margin: 0; font-size: 18px; }
+.settings-section { padding: 14px 0; border-top: 1px solid var(--border); }
+.settings-section h3 { margin: 0 0 4px; font-size: 14px; }
+.hint, .muted { color: var(--muted); font-size: 13px; }
+
+.ai-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+.ai-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.ai-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.ai-form input, .ai-form select, .draft-field input, .draft-output {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.audit-list { list-style: none; margin: 0; padding: 0; }
+.audit-row { padding: 8px 0; border-top: 1px solid var(--border); }
+.audit-meta { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.audit-provider { font-weight: 600; }
+.audit-time { margin-left: auto; color: var(--muted); font-size: 12px; }
+.audit-summary { color: var(--muted); font-size: 13px; margin-top: 3px; }
+
+.draft-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.draft-output { width: 100%; margin-top: 12px; resize: vertical; font-family: inherit; line-height: 1.5; }

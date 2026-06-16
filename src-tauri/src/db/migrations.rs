@@ -106,6 +106,14 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_messages_account ON messages(account_id);
     CREATE INDEX idx_loops_status ON loops(status, kind);
     "#,
+    // --- v2: key/value app settings (e.g. the selected AI provider config) ---
+    // Non-secret only. API keys/tokens still live in the OS keychain.
+    r#"
+    CREATE TABLE app_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// Apply any migrations newer than the database's current `user_version`.

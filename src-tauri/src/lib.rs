@@ -30,12 +30,16 @@ pub fn run() {
             let state = AppState::new(db_path)
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
             app.manage(state);
+            // Re-arm a previously-configured AI provider from settings + keychain.
+            commands::restore_ai_provider(&app.state::<AppState>());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::emit_test_event,
             commands::add_account,
+            commands::detect_account,
+            commands::start_oauth_login,
             commands::list_accounts,
             commands::remove_account,
             commands::sync_account,
@@ -48,6 +52,9 @@ pub fn run() {
             commands::search,
             commands::draft_reply,
             commands::get_ai_audit_log,
+            commands::set_ai_provider,
+            commands::clear_ai_provider,
+            commands::get_ai_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

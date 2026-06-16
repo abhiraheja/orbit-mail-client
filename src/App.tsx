@@ -18,6 +18,8 @@ import {
 import { LoopList } from "./components/LoopList";
 import { Briefing } from "./components/Briefing";
 import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { DraftReply } from "./components/DraftReply";
 import { AddAccountForm } from "./components/AddAccountForm";
 import "./App.css";
 
@@ -38,6 +40,8 @@ function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftLoop, setDraftLoop] = useState<LoopView | null>(null);
 
   const refreshLoops = useCallback((f: Filter) => {
     listLoops(f === "all" ? undefined : f)
@@ -108,6 +112,7 @@ function App() {
   // Static, app-owned palette commands (navigation + sync). Pure UI intent.
   const paletteActions: PaletteAction[] = [
     { id: "sync", label: "Sync all accounts", hint: "Command", run: () => void handleSyncAll() },
+    { id: "settings", label: "Open settings (AI & privacy)", hint: "Command", run: () => setSettingsOpen(true) },
     { id: "all", label: "Show: All loops", hint: "View", run: () => setFilter("all") },
     { id: "owe", label: "Show: Owe reply", hint: "View", run: () => setFilter("owe_reply") },
     { id: "waiting", label: "Show: Waiting on", hint: "View", run: () => setFilter("waiting_on") },
@@ -137,6 +142,9 @@ function App() {
           <button type="button" className="palette-hint" onClick={() => setPaletteOpen(true)}>
             Search <kbd>Ctrl K</kbd>
           </button>
+          <button type="button" onClick={() => setSettingsOpen(true)}>
+            Settings
+          </button>
           <button type="button" onClick={handleSyncAll}>
             Sync
           </button>
@@ -162,6 +170,7 @@ function App() {
         onOpen={handleOpen}
         onSnooze={handleSnooze}
         onDismiss={handleDismiss}
+        onDraft={(loop) => setDraftLoop(loop)}
       />
 
       <CommandPalette
@@ -171,6 +180,9 @@ function App() {
         onOpenThread={handleOpenThread}
         onOpenContact={handleOpenContact}
       />
+
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {draftLoop && <DraftReply loop={draftLoop} onClose={() => setDraftLoop(null)} />}
     </main>
   );
 }

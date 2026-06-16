@@ -16,9 +16,10 @@ interface Props {
   onOpen: (loop: LoopView) => void;
   onSnooze: (loop: LoopView) => void;
   onDismiss: (loop: LoopView) => void;
+  onDraft: (loop: LoopView) => void;
 }
 
-export function LoopList({ loops, onOpen, onSnooze, onDismiss }: Props) {
+export function LoopList({ loops, onOpen, onSnooze, onDismiss, onDraft }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: loops.length,
@@ -56,6 +57,9 @@ export function LoopList({ loops, onOpen, onSnooze, onDismiss }: Props) {
               </div>
               <span className="loop-age">{loop.age}</span>
               <div className="loop-actions">
+                <button type="button" onClick={() => onDraft(loop)} title="Draft a reply with AI">
+                  Draft
+                </button>
                 <button type="button" onClick={() => onSnooze(loop)} title="Snooze 3 days">
                   Snooze
                 </button>

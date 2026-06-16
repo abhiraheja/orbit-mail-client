@@ -277,6 +277,19 @@ pub fn thread_view(conn: &Connection, thread_id: i64) -> Result<Option<crate::mo
     }))
 }
 
+/// Auth details for a sync: (email, provider, auth_kind, cred_ref).
+pub fn account_auth(conn: &Connection, account_id: i64) -> Result<Option<(String, String, String, String)>> {
+    let row = conn
+        .query_row(
+            "SELECT email, provider, auth_kind, COALESCE(cred_ref, '')
+             FROM accounts WHERE id = ?1",
+            params![account_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+        )
+        .optional()?;
+    Ok(row)
+}
+
 /// The keychain reference stored for an account (to load creds / clean up).
 pub fn account_cred_ref(conn: &Connection, account_id: i64) -> Result<Option<(String, String)>> {
     let row = conn
@@ -287,6 +300,29 @@ pub fn account_cred_ref(conn: &Connection, account_id: i64) -> Result<Option<(St
         )
         .optional()?;
     Ok(row)
+}
+
+// --- App settings (non-secret key/value) ------------------------------------
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let v = conn
+        .query_row("SELECT value FROM app_settings WHERE key = ?1", params![key], |r| r.get(0))
+        .optional()?;
+    Ok(v)
+}
+
+pub fn delete_setting(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+    Ok(())
 }
 
 // --- Search -----------------------------------------------------------------
