@@ -53,6 +53,27 @@ export interface ThreadView {
   messages: Message[];
 }
 
+export interface BriefingView {
+  headline: string;
+  total_active: number;
+  waiting_on: number;
+  owe_reply: number;
+  promised: number;
+  account_count: number;
+  last_synced: string | null; // pre-rendered, e.g. "5 minutes ago"
+  top_loops: LoopView[];
+}
+
+export type SearchKind = "thread" | "contact";
+
+export interface SearchResult {
+  kind: SearchKind;
+  title: string;
+  subtitle: string;
+  thread_id: number | null;
+  contact_email: string | null;
+}
+
 export interface AddAccountInput {
   email: string;
   display_name: string | null;
@@ -89,6 +110,14 @@ export const getThread = (threadId: number): Promise<ThreadView> =>
   invoke("get_thread", { threadId });
 
 export const listContacts = (): Promise<Contact[]> => invoke("list_contacts");
+
+/** Display-ready daily briefing: counts, last-synced, and the most urgent loops. */
+export const getDailyBriefing = (): Promise<BriefingView> =>
+  invoke("get_daily_briefing");
+
+/** Keyword search across threads and contacts for the Ctrl+K palette. */
+export const search = (query: string): Promise<SearchResult[]> =>
+  invoke("search", { query });
 
 export interface AuditEntry {
   id: number;

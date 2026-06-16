@@ -8,6 +8,7 @@ mod events;
 mod graph;
 mod loops;
 mod models;
+mod search;
 mod secrets;
 mod state;
 mod sync;
@@ -43,6 +44,8 @@ pub fn run() {
             commands::dismiss_loop,
             commands::get_thread,
             commands::list_contacts,
+            commands::get_daily_briefing,
+            commands::search,
             commands::draft_reply,
             commands::get_ai_audit_log,
         ])

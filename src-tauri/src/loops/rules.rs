@@ -46,18 +46,71 @@ pub fn format_age(now: i64, anchor: i64) -> String {
     }
 }
 
-/// Commitment language for the kind-3 "promised" heuristic. Deliberately rough;
-/// AI improves precision later (spec §10).
-fn contains_commitment(body: &str) -> bool {
+/// First-person commitment phrases — the core "I owe you something" signal.
+const COMMITMENTS: &[&str] = &[
+    "i'll send", "i will send", "i'll get back", "i will get back",
+    "get back to you", "i'll follow up", "i will follow up", "let me get",
+    "let me send", "i'll have", "i will have", "i'll circle back",
+    "will circle back", "i'll forward", "i will forward", "i'll share",
+    "i will share", "i'll let you know", "i will let you know", "i'll check",
+    "i will check", "i'll update you", "i will update you",
+];
+
+/// Deadline language. Its presence makes a commitment more concrete, so it raises
+/// confidence (and helps suppress vague pleasantries).
+const DEADLINES: &[&str] = &[
+    "by tomorrow", "by monday", "by tuesday", "by wednesday", "by thursday",
+    "by friday", "by saturday", "by sunday", "by end of day", "by eod",
+    "by end of week", "by next week", "by the end of", "later today",
+    "first thing", "this afternoon",
+];
+
+/// Negation tokens that, just before a commitment, flip its meaning ("I *won't*
+/// get back to you"). Checked within a short window preceding the phrase.
+const NEGATIONS: &[&str] = &[
+    "won't", "will not", "can't", "cannot", "unable", "not able", "don't",
+    "do not", "didn't", "couldn't",
+];
+
+/// Is there a negation token in the ~18 chars before `idx`? Walked on a char
+/// boundary so non-ASCII bodies can't panic the slice.
+fn negated_before(b: &str, idx: usize) -> bool {
+    let mut lo = idx.saturating_sub(18);
+    while lo > 0 && !b.is_char_boundary(lo) {
+        lo -= 1;
+    }
+    let window = &b[lo..idx];
+    NEGATIONS.iter().any(|n| window.contains(n))
+}
+
+/// Score a sent message for the kind-3 "promised" heuristic. Returns the
+/// confidence (always below the SQL-certain 1.0) if a non-negated commitment is
+/// present, else None. A concrete deadline raises confidence. Deliberately
+/// rough; AI improves precision later (spec §10).
+fn commitment_confidence(body: &str) -> Option<f64> {
     let b = body.to_lowercase();
-    const PHRASES: &[&str] = &[
-        "i'll send", "i will send", "i'll get back", "i will get back",
-        "get back to you", "i'll follow up", "i will follow up", "let me get",
-        "let me send", "i'll have", "i will have", "by tomorrow", "by monday",
-        "by tuesday", "by wednesday", "by thursday", "by friday", "by end of day",
-        "by eod", "i'll circle back", "will circle back",
-    ];
-    PHRASES.iter().any(|p| b.contains(p))
+
+    // Find the first commitment phrase that isn't negated.
+    let committed = COMMITMENTS.iter().any(|p| {
+        let mut from = 0;
+        while let Some(off) = b[from..].find(p) {
+            let abs = from + off;
+            if !negated_before(&b, abs) {
+                return true;
+            }
+            from = abs + p.len();
+        }
+        false
+    });
+    if !committed {
+        return None;
+    }
+
+    let mut confidence: f64 = 0.5;
+    if DEADLINES.iter().any(|d| b.contains(d)) {
+        confidence += 0.25;
+    }
+    Some(confidence.min(0.85))
 }
 
 fn parse_emails(json: &str) -> Vec<String> {
@@ -116,14 +169,14 @@ fn detect(tips: &[ThreadTip], sent: &[queries::SentMessage], owner: &HashSet<Str
         if !tip_msg_ids.contains(&s.message_id) {
             continue; // someone has since replied → not an open promise
         }
-        if s.body_text.as_deref().is_some_and(contains_commitment) {
+        if let Some(confidence) = s.body_text.as_deref().and_then(commitment_confidence) {
             out.push(Detection {
                 kind: LoopKind::Promised,
                 thread_id: s.thread_id,
                 contact_email: primary_recipient(&s.to_emails, owner),
                 anchor_message_id: s.message_id,
                 age_anchor: s.sent_at,
-                confidence: 0.5, // heuristic; AI raises this later
+                confidence, // heuristic; AI raises this later
             });
         }
     }
@@ -329,6 +382,27 @@ mod tests {
             .query_row("SELECT confidence FROM loops WHERE kind='promised'", [], |r| r.get(0))
             .unwrap();
         assert!(conf < 1.0);
+    }
+
+    #[test]
+    fn promised_suppressed_by_negation() {
+        let mut conn = db_with_account();
+        // "won't get back to you" must NOT register as a promise.
+        let batch = vec![outbound("<a>", "Re: ask", "Sorry, I won't get back to you on this.", NOW - DAY)];
+        ingest_messages(&mut conn, 1, &owner(), Folder::Sent, &batch, NOW).unwrap();
+        detect_and_store(&mut conn, &Config::default(), NOW).unwrap();
+        assert_eq!(loops_of_kind(&conn, LoopKind::Promised), 0);
+    }
+
+    #[test]
+    fn promised_deadline_raises_confidence() {
+        // A commitment with a concrete deadline scores higher than a vague one.
+        let vague = commitment_confidence("I'll send the deck.").unwrap();
+        let dated = commitment_confidence("I'll send the deck by Friday.").unwrap();
+        assert!(dated > vague, "deadline should raise confidence: {dated} > {vague}");
+        assert!(dated < 1.0, "still below the SQL-certain kinds");
+        // A pure pleasantry with no commitment scores nothing.
+        assert!(commitment_confidence("Thanks, talk soon!").is_none());
     }
 
     #[test]

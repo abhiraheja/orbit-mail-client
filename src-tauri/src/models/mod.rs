@@ -57,6 +57,17 @@ impl LoopKind {
             LoopKind::Promised => "promised",
         }
     }
+
+    /// Parse a DB `kind` string. Unknown values fall back to `Promised` (the
+    /// lowest-confidence kind) rather than failing — kinds are a closed set we
+    /// write ourselves, so this only guards against future/typo'd rows.
+    pub fn from_db_str(s: &str) -> Self {
+        match s {
+            "waiting_on" => LoopKind::WaitingOn,
+            "owe_reply" => LoopKind::OweReply,
+            _ => LoopKind::Promised,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,11 +93,48 @@ pub struct LoopView {
     pub confidence: f64,
 }
 
+/// The daily briefing — a display-ready snapshot of where things stand (spec
+/// §14, Phase 2). Every string is pre-rendered; the frontend renders verbatim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BriefingView {
+    /// One-line summary, e.g. "7 open loops — 2 to reply, 4 waiting, 1 promised".
+    pub headline: String,
+    pub total_active: i64,
+    pub waiting_on: i64,
+    pub owe_reply: i64,
+    pub promised: i64,
+    pub account_count: i64,
+    /// Human "last synced" string, e.g. "5 minutes ago", or None if never synced.
+    pub last_synced: Option<String>,
+    /// The most urgent loops (oldest first), capped — the "do these first" list.
+    pub top_loops: Vec<LoopView>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadView {
     pub id: i64,
     pub subject: Option<String>,
     pub messages: Vec<Message>,
+}
+
+/// What a search hit points at. Drives the icon and the open action in the
+/// Ctrl+K palette (spec §6 — search is Rust's job, the frontend only renders).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchKind {
+    Thread,
+    Contact,
+}
+
+/// One display-ready search hit. The frontend renders `title`/`subtitle`
+/// verbatim and uses `thread_id`/`contact_email` to open the right view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub kind: SearchKind,
+    pub title: String,
+    pub subtitle: String,
+    pub thread_id: Option<i64>,
+    pub contact_email: Option<String>,
 }
 
 /// One row of the privacy audit log — powers the "what left my machine" view.

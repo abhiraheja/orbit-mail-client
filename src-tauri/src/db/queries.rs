@@ -289,6 +289,63 @@ pub fn account_cred_ref(conn: &Connection, account_id: i64) -> Result<Option<(St
     Ok(row)
 }
 
+// --- Search -----------------------------------------------------------------
+
+/// One message/thread hit from the FTS index. Caller turns it into a SearchResult.
+pub struct MessageHit {
+    pub thread_id: i64,
+    pub subject: String,
+    pub snippet: String,
+    pub from_email: String,
+}
+
+/// Full-text search over message subject/body, collapsed to one hit per thread
+/// and ordered by FTS relevance. `fts_query` is an FTS5 MATCH expression built by
+/// the search module — never raw user input.
+pub fn search_messages(conn: &Connection, fts_query: &str, limit: i64) -> Result<Vec<MessageHit>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.thread_id,
+                COALESCE(m.subject, '(no subject)'),
+                COALESCE(m.snippet, ''),
+                m.from_email
+         FROM messages_fts
+         JOIN messages m ON m.id = messages_fts.rowid
+         WHERE messages_fts MATCH ?1 AND m.thread_id IS NOT NULL
+         GROUP BY m.thread_id
+         ORDER BY MIN(messages_fts.rank)
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![fts_query, limit], |r| {
+        Ok(MessageHit {
+            thread_id: r.get(0)?,
+            subject: r.get(1)?,
+            snippet: r.get(2)?,
+            from_email: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// One contact hit. `like` is a `%…%` pattern built by the search module.
+pub struct ContactHit {
+    pub email: String,
+    pub display: String,
+}
+
+pub fn search_contacts(conn: &Connection, like: &str, limit: i64) -> Result<Vec<ContactHit>> {
+    let mut stmt = conn.prepare(
+        "SELECT email, COALESCE(display_name, email)
+         FROM contacts
+         WHERE email LIKE ?1 ESCAPE '\\' OR display_name LIKE ?1 ESCAPE '\\'
+         ORDER BY last_seen DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![like, limit], |r| {
+        Ok(ContactHit { email: r.get(0)?, display: r.get(1)? })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 // --- AI audit log (the privacy chokepoint, spec §3.3) -----------------------
 
 /// Record one outbound AI call. Written BEFORE the provider is contacted so the
@@ -480,6 +537,54 @@ pub fn count_active_loops(conn: &Connection, now: i64) -> Result<i64> {
         params![now],
         |r| r.get(0),
     )?;
+    Ok(n)
+}
+
+/// Counts of currently-actionable loops broken down by kind, for the briefing.
+/// Same "active" predicate as [`count_active_loops`].
+pub fn active_loop_counts(conn: &Connection, now: i64) -> Result<LoopKindCounts> {
+    let mut stmt = conn.prepare(
+        "SELECT kind, count(*) FROM loops
+         WHERE status = 'open' OR (status = 'snoozed' AND snoozed_until <= ?1)
+         GROUP BY kind",
+    )?;
+    let mut counts = LoopKindCounts::default();
+    let rows = stmt.query_map(params![now], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (kind, n) = row?;
+        match kind.as_str() {
+            "waiting_on" => counts.waiting_on = n,
+            "owe_reply" => counts.owe_reply = n,
+            "promised" => counts.promised = n,
+            _ => {}
+        }
+    }
+    Ok(counts)
+}
+
+/// Active-loop tallies by kind. The `total` is derived by the caller.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LoopKindCounts {
+    pub waiting_on: i64,
+    pub owe_reply: i64,
+    pub promised: i64,
+}
+
+/// Most recent `last_synced` across all accounts (None if never synced).
+pub fn latest_sync(conn: &Connection) -> Result<Option<i64>> {
+    let ts: Option<i64> = conn.query_row(
+        "SELECT MAX(last_synced) FROM accounts",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(ts)
+}
+
+/// Number of configured accounts.
+pub fn count_accounts(conn: &Connection) -> Result<i64> {
+    let n: i64 = conn.query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))?;
     Ok(n)
 }
 

@@ -10,8 +10,11 @@ use crate::ai::provider::AiRequest;
 use crate::db::queries;
 use crate::error::{AppError, Result};
 use crate::events::{self, AiDone, AiToken, LoopsUpdated, SyncComplete, SyncError, SyncProgress};
-use crate::loops::rules;
-use crate::models::{Account, AuditEntry, Contact, LoopKind, LoopView, ThreadView};
+use crate::loops::{briefing, rules};
+use crate::models::{
+    Account, AuditEntry, BriefingView, Contact, LoopKind, LoopView, SearchResult, ThreadView,
+};
+use crate::search;
 use crate::secrets::{self, ImapSecret};
 use crate::state::AppState;
 use crate::sync::imap::{ImapConfig, ImapSource};
@@ -24,13 +27,6 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-fn loop_kind_from_str(s: &str) -> LoopKind {
-    match s {
-        "waiting_on" => LoopKind::WaitingOn,
-        "owe_reply" => LoopKind::OweReply,
-        _ => LoopKind::Promised,
-    }
-}
 
 // --- Health / bridge --------------------------------------------------------
 
@@ -179,7 +175,7 @@ pub fn list_loops(state: State<'_, AppState>, kind: Option<String>) -> Result<Ve
     Ok(rows
         .into_iter()
         .map(|r| {
-            let kind = loop_kind_from_str(&r.kind);
+            let kind = LoopKind::from_db_str(&r.kind);
             let age = rules::format_age(now, r.age_anchor);
             r.into_view(kind, age)
         })
@@ -211,6 +207,23 @@ pub fn get_thread(state: State<'_, AppState>, thread_id: i64) -> Result<ThreadVi
 pub fn list_contacts(state: State<'_, AppState>) -> Result<Vec<Contact>> {
     let conn = state.db.lock().expect("db mutex poisoned");
     queries::list_contacts(&conn)
+}
+
+/// Display-ready daily briefing: counts by kind, last-synced, and the most
+/// urgent loops. Reads already-detected loops; runs no detection (spec §14).
+#[tauri::command]
+pub fn get_daily_briefing(state: State<'_, AppState>) -> Result<BriefingView> {
+    let now = now_unix();
+    let conn = state.db.lock().expect("db mutex poisoned");
+    briefing::build(&conn, now)
+}
+
+/// Keyword search across threads and contacts for the Ctrl+K palette. Raw input
+/// is sanitized into FTS/LIKE patterns inside the search module (spec §6).
+#[tauri::command]
+pub fn search(state: State<'_, AppState>, query: String) -> Result<Vec<SearchResult>> {
+    let conn = state.db.lock().expect("db mutex poisoned");
+    search::search(&conn, &query)
 }
 
 // --- AI (post-heuristic; optional) ------------------------------------------

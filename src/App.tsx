@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   listAccounts,
   listLoops,
+  getDailyBriefing,
   syncAccount,
   snoozeLoop,
   dismissLoop,
@@ -12,8 +13,11 @@ import {
   type Account,
   type LoopView,
   type LoopKind,
+  type BriefingView,
 } from "./lib/ipc";
 import { LoopList } from "./components/LoopList";
+import { Briefing } from "./components/Briefing";
+import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
 import { AddAccountForm } from "./components/AddAccountForm";
 import "./App.css";
 
@@ -30,13 +34,16 @@ const THREE_DAYS = 3 * 24 * 60 * 60;
 function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loops, setLoops] = useState<LoopView[]>([]);
+  const [briefing, setBriefing] = useState<BriefingView | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const refreshLoops = useCallback((f: Filter) => {
     listLoops(f === "all" ? undefined : f)
       .then(setLoops)
       .catch((e) => setSyncStatus(`Error loading loops: ${e}`));
+    getDailyBriefing().then(setBriefing).catch(() => {});
   }, []);
 
   // Initial load + live event wiring (Rust pushes; the UI only re-reads).
@@ -58,6 +65,18 @@ function App() {
     };
   }, [filter, refreshLoops]);
 
+  // Global Ctrl/Cmd+K toggles the command palette.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   async function handleSyncAll() {
     setSyncStatus("Starting sync…");
     for (const a of accounts) await syncAccount(a.id);
@@ -73,10 +92,27 @@ function App() {
     refreshLoops(filter);
   }
 
-  function handleOpen(loop: LoopView) {
+  function handleOpenThread(threadId: number) {
     // Thread context view lands next; for now surface the selection.
-    setSyncStatus(`Thread: ${loop.subject}`);
+    setSyncStatus(`Thread #${threadId}`);
   }
+
+  function handleOpen(loop: LoopView) {
+    handleOpenThread(loop.thread_id);
+  }
+
+  function handleOpenContact(email: string) {
+    setSyncStatus(`Contact: ${email}`);
+  }
+
+  // Static, app-owned palette commands (navigation + sync). Pure UI intent.
+  const paletteActions: PaletteAction[] = [
+    { id: "sync", label: "Sync all accounts", hint: "Command", run: () => void handleSyncAll() },
+    { id: "all", label: "Show: All loops", hint: "View", run: () => setFilter("all") },
+    { id: "owe", label: "Show: Owe reply", hint: "View", run: () => setFilter("owe_reply") },
+    { id: "waiting", label: "Show: Waiting on", hint: "View", run: () => setFilter("waiting_on") },
+    { id: "promised", label: "Show: Promised", hint: "View", run: () => setFilter("promised") },
+  ];
 
   if (accounts.length === 0) {
     return (
@@ -98,11 +134,16 @@ function App() {
         <h1>Orbit</h1>
         <div className="topbar-right">
           {syncStatus && <span className="status">{syncStatus}</span>}
+          <button type="button" className="palette-hint" onClick={() => setPaletteOpen(true)}>
+            Search <kbd>Ctrl K</kbd>
+          </button>
           <button type="button" onClick={handleSyncAll}>
             Sync
           </button>
         </div>
       </header>
+
+      {briefing && <Briefing briefing={briefing} onOpen={handleOpen} />}
 
       <nav className="tabs">
         {FILTERS.map((f) => (
@@ -121,6 +162,14 @@ function App() {
         onOpen={handleOpen}
         onSnooze={handleSnooze}
         onDismiss={handleDismiss}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        actions={paletteActions}
+        onOpenThread={handleOpenThread}
+        onOpenContact={handleOpenContact}
       />
     </main>
   );
